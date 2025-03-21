@@ -7,10 +7,10 @@ from s2s import JarvisClient  # adjust the import based on your project structur
 # Load environment variables from .env
 load_dotenv()
 
-st.set_page_config(page_title="Jarvis Chatbot", layout="centered")
+st.set_page_config(page_title="JarvisV3 Chatbot", layout="centered")
 
 # Display the logo at the top of the app centered.
-logo_path = "./assets/Header.png"
+logo_path = "./assets/logo.png"
 if os.path.exists(logo_path):
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -35,10 +35,11 @@ if "settings" not in st.session_state:
         "FUNCTION_CALLING": os.getenv("FUNCTION_CALLING", "False").lower() in ("true", "1", "yes"),
         "VOICE": os.getenv("VOICE", "echo"),
         "INCLUDE_DATE": os.getenv("INCLUDE_DATE", "True").lower() in ("true", "1", "yes"),
-        "INCLUDE_TIME": os.getenv("INCLUDE_TIME", "True").lower() in ("true", "1", "yes")
+        "INCLUDE_TIME": os.getenv("INCLUDE_TIME", "True").lower() in ("true", "1", "yes"),
+        "PC_USERNAME": os.getenv("PC_USERNAME", "YourUsername")
     }
 
-# Initialize the text-mode Jarvis client if not already done.
+# Initialize the Jarvis text client if not already done.
 if "text_client" not in st.session_state or st.session_state.text_client is None:
     st.session_state.text_client = JarvisClient(
         api_key=st.session_state.settings["OPENAI_API_KEY"],
@@ -47,7 +48,8 @@ if "text_client" not in st.session_state or st.session_state.text_client is None
         include_date=st.session_state.settings["INCLUDE_DATE"],
         include_time=st.session_state.settings["INCLUDE_TIME"],
         mode="text",
-        function_calling=st.session_state.settings["FUNCTION_CALLING"]
+        function_calling=st.session_state.settings["FUNCTION_CALLING"],
+        voice=st.session_state.settings["VOICE"]
     )
     st.session_state.text_client.start_realtime()  # Start the WebSocket connection
 
@@ -56,7 +58,7 @@ tabs = st.tabs(["Chat", "Realtime", "Settings"])
 
 # --------------------- Chat Tab (tab[0]) ---------------------
 with tabs[0]:
-    st.title("💬 Chat with Jarvis")
+    st.title("💬 Chat with JarvisV3")
     
     prompt = st.chat_input("Ask Jarvis...")
     if prompt:
@@ -64,7 +66,7 @@ with tabs[0]:
         # Synchronously send the text message and wait for a response.
         response = st.session_state.text_client.ask_sync(prompt)
         st.session_state.messages.append({"role": "assistant", "content": response})
-        st.rerun()  # Update UI immediately
+        st.experimental_rerun()  # Update UI immediately
 
     for message in st.session_state.messages:
         if message["role"] == "assistant":
@@ -77,15 +79,8 @@ with tabs[0]:
 # --------------------- Realtime Audio Tab (tab[1]) ---------------------
 with tabs[1]:
     st.header("🎙️ Realtime Audio Chat")
-    if "realtime_client" in st.session_state and st.session_state.realtime_client is not None:
-        if st.button("Stop Realtime Audio Chat"):
-            st.session_state.realtime_client.stop_realtime()
-            st.session_state.realtime_client = None
-            st.success("Realtime audio chat stopped.")
-            st.rerun()
-    else:
+    if "realtime_client" not in st.session_state or st.session_state.realtime_client is None:
         if st.button("Start Realtime Audio Chat"):
-            # Create a new instance using the updated settings
             st.session_state.realtime_client = JarvisClient(
                 api_key=st.session_state.settings["OPENAI_API_KEY"],
                 model=st.session_state.settings["OPENAI_MODEL"],
@@ -93,11 +88,19 @@ with tabs[1]:
                 include_date=st.session_state.settings["INCLUDE_DATE"],
                 include_time=st.session_state.settings["INCLUDE_TIME"],
                 mode="realtime",
-                function_calling=st.session_state.settings["FUNCTION_CALLING"]
+                function_calling=st.session_state.settings["FUNCTION_CALLING"],
+                voice=st.session_state.settings["VOICE"]
             )
             st.session_state.realtime_client.start_realtime()
             st.success("Realtime audio chat started.")
-            st.rerun()
+            st.experimental_rerun()
+    else:
+        if st.button("Stop Realtime Audio Chat"):
+            st.session_state.realtime_client.stop_realtime()
+            st.session_state.realtime_client = None
+            st.success("Realtime audio chat stopped.")
+            st.experimental_rerun()
+
 # --------------------- Settings Tab (tab[2]) ---------------------
 with tabs[2]:
     st.header("Settings")
@@ -120,6 +123,7 @@ with tabs[2]:
         )
         include_date = st.checkbox("Include Date", value=st.session_state.settings["INCLUDE_DATE"])
         include_time = st.checkbox("Include Time", value=st.session_state.settings["INCLUDE_TIME"])
+        pc_username = st.text_input("PC Username", value=st.session_state.settings["PC_USERNAME"])
         submitted = st.form_submit_button("Save Settings")
         if submitted:
             st.session_state.settings["OPENAI_API_KEY"] = api_key
@@ -131,6 +135,7 @@ with tabs[2]:
             st.session_state.settings["VOICE"] = voice
             st.session_state.settings["INCLUDE_DATE"] = include_date
             st.session_state.settings["INCLUDE_TIME"] = include_time
+            st.session_state.settings["PC_USERNAME"] = pc_username
 
             env_path = ".env"
             set_key(env_path, "OPENAI_API_KEY", api_key)
@@ -142,4 +147,5 @@ with tabs[2]:
             set_key(env_path, "VOICE", voice)
             set_key(env_path, "INCLUDE_DATE", str(include_date))
             set_key(env_path, "INCLUDE_TIME", str(include_time))
-            st.success("Settings saved to .env file. Restart the app to apply changes.")
+            set_key(env_path, "PC_USERNAME", pc_username)
+            st.success("Settings saved to .env file. Restart or restart realtime chat to apply changes.")
