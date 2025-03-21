@@ -10,6 +10,9 @@ import subprocess
 import time
 import queue
 
+# Import our custom functions from functions.py
+from functions import run_os_command, print_message, print_stl
+
 load_dotenv()  # load .env variables
 
 class JarvisClient:
@@ -17,7 +20,7 @@ class JarvisClient:
                  include_date=True, include_time=True, mode="realtime", function_calling=True, voice=None):
         """
         mode: "realtime" for audio chat (with mic streaming) or "text" for text-only chat.
-        function_calling: Enable or disable function calling (e.g., run_os_command).
+        function_calling: Enable or disable function calling.
         voice: The voice to use for audio responses.
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -28,9 +31,10 @@ class JarvisClient:
         self.initial_prompt = initial_prompt or os.getenv("INITIAL_PROMPT", "")
         self.include_date = include_date
         self.include_time = include_time
-        self.mode = mode  # "realtime" or "text"
-        self.function_calling = function_calling  # new flag to control function calling
-        self.voice = voice or os.getenv("VOICE", "echo")  # use dynamic voice from parameter or env
+        self.mode = mode
+        self.function_calling = function_calling
+        self.voice = voice or os.getenv("VOICE", "echo")
+        self.pc_username = os.getenv("PC_USERNAME", "YourUsername")  # New: load PC_USERNAME
 
         self.ws = None
         self.ws_thread = None
@@ -99,17 +103,11 @@ class JarvisClient:
         self.on_text_response = original_callback
         return answer
 
-    def execute_os_command(self, command: str) -> str:
-        try:
-            result = subprocess.run(command, shell=True, capture_output=True, text=True)
-            return result.stdout.strip() if result.stdout.strip() else result.stderr.strip()
-        except Exception as e:
-            return str(e)
-
     def on_message(self, ws, message):
         event = json.loads(message)
         event_type = event.get("type")
-        print(f"DEBUG: Received event of type: {event_type}")
+        # Debug prints can be uncommented as needed.
+        # print(f"DEBUG: Received event of type: {event_type}")
         
         if event_type == "response.audio.delta":
             if not self.mute_mic:
@@ -146,28 +144,64 @@ class JarvisClient:
             response = event.get("response", {})
             outputs = response.get("output", [])
             for item in outputs:
-                if item.get("type") == "function_call" and item.get("name") == "run_os_command":
+                if item.get("type") == "function_call":
+                    func_name = item.get("name")
                     call_id = item.get("call_id")
                     arguments = item.get("arguments")
                     try:
                         args = json.loads(arguments)
-                        command = args.get("command")
                     except Exception as e:
                         print("DEBUG: Error parsing function call arguments:", e)
-                        command = None
-                    if command:
-                        result = self.execute_os_command(command)
-                        output_event = {
-                            "type": "conversation.item.create",
-                            "item": {
-                                "type": "function_call_output",
-                                "call_id": call_id,
-                                "output": json.dumps({"result": result})
+                        args = {}
+                    # Handle run_os_command
+                    if func_name == "run_os_command":
+                        command = args.get("command")
+                        if command:
+                            result = run_os_command(command)
+                            output_event = {
+                                "type": "conversation.item.create",
+                                "item": {
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": json.dumps({"result": result})
+                                }
                             }
-                        }
-                        self.ws.send(json.dumps(output_event))
-                        response_create_event = {"type": "response.create"}
-                        self.ws.send(json.dumps(response_create_event))
+                            self.ws.send(json.dumps(output_event))
+                            response_create_event = {"type": "response.create"}
+                            self.ws.send(json.dumps(response_create_event))
+                    # Handle print function
+                    elif func_name == "print":
+                        message_to_print = args.get("message")
+                        if message_to_print:
+                            result = print_message(message_to_print)
+                            output_event = {
+                                "type": "conversation.item.create",
+                                "item": {
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": json.dumps({"result": result})
+                                }
+                            }
+                            self.ws.send(json.dumps(output_event))
+                            response_create_event = {"type": "response.create"}
+                            self.ws.send(json.dumps(response_create_event))
+                    # Handle print_stl function
+                    elif func_name == "print_stl":
+                        stl_file = args.get("stl_file")
+                        if stl_file:
+                            # Pass the PC username from initialization
+                            result = print_stl(stl_file, self.pc_username)
+                            output_event = {
+                                "type": "conversation.item.create",
+                                "item": {
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": json.dumps({"result": result})
+                                }
+                            }
+                            self.ws.send(json.dumps(output_event))
+                            response_create_event = {"type": "response.create"}
+                            self.ws.send(json.dumps(response_create_event))
                 elif item.get("type") == "message":
                     text = item.get("text", "")
                     if text and self.on_text_response:
@@ -185,8 +219,7 @@ class JarvisClient:
                         if text and self.on_text_response:
                             print(f"DEBUG: Sending text from response.output_item.done: {text}")
                             self.on_text_response(text)
-        else:
-            print("DEBUG: Unhandled event:", event)
+        
 
     def on_error(self, ws, error):
         print("DEBUG: WebSocket error:", error)
@@ -203,16 +236,16 @@ class JarvisClient:
                                               rate=24000,
                                               output=True,
                                               frames_per_buffer=1024)
-        # Include our custom instructions here so that the realtime session uses our initial prompt
+        # Set up the session update payload with our custom instructions and tool definitions
         session_update = {
             "type": "session.update",
             "session": {
                 "voice": self.voice,  # dynamic voice setting
                 "output_audio_format": "pcm16",
-                "instructions": self.initial_prompt  # override default instructions with your prompt
+                "instructions": self.initial_prompt  # use our initial prompt as the instructions
             }
         }
-        # Only add function calling tool if enabled.
+        # Only add function calling tools if enabled.
         if self.function_calling:
             session_update["session"]["tools"] = [
                 {
@@ -229,11 +262,41 @@ class JarvisClient:
                         },
                         "required": ["command"]
                     }
+                },
+                {
+                    "type": "function",
+                    "name": "print",
+                    "description": "Print a message in the terminal.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "message": {
+                                "type": "string",
+                                "description": "The message to print in the terminal."
+                            }
+                        },
+                        "required": ["message"]
+                    }
+                },
+                {
+                    "type": "function",
+                    "name": "print_stl",
+                    "description": "Open an STL file and follow a sequence of clicks to print it.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "stl_file": {
+                                "type": "string",
+                                "description": "The path to the STL file to print."
+                            }
+                        },
+                        "required": ["stl_file"]
+                    }
                 }
             ]
             session_update["session"]["tool_choice"] = "auto"
         ws.send(json.dumps(session_update))
-        # We no longer call send_initial_prompt since instructions are set in the session update.
+        # Start audio streaming if in realtime mode.
         if self.mode == "realtime":
             threading.Thread(target=self.send_audio, daemon=True).start()
 
