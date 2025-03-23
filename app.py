@@ -66,7 +66,7 @@ with tabs[0]:
         # Synchronously send the text message and wait for a response.
         response = st.session_state.text_client.ask_sync(prompt)
         st.session_state.messages.append({"role": "assistant", "content": response})
-        st.experimental_rerun()  # Update UI immediately
+        st.rerun()  # Update UI immediately
 
     for message in st.session_state.messages:
         if message["role"] == "assistant":
@@ -93,13 +93,13 @@ with tabs[1]:
             )
             st.session_state.realtime_client.start_realtime()
             st.success("Realtime audio chat started.")
-            st.experimental_rerun()
+            st.rerun()
     else:
         if st.button("Stop Realtime Audio Chat"):
             st.session_state.realtime_client.stop_realtime()
             st.session_state.realtime_client = None
             st.success("Realtime audio chat stopped.")
-            st.experimental_rerun()
+            st.rerun()
 
 # --------------------- Settings Tab (tab[2]) ---------------------
 with tabs[2]:
